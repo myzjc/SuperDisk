@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+// InitDB 用于初始化数据库
 func InitDB(dbPath string) (*gorm.DB, error) {
 	// 打开数据库连接
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
@@ -20,7 +21,6 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	// 如果不存在就建表；如果有新字段会自动增加列
 	err = db.AutoMigrate(&model.File{})
 	if err != nil {
 		return nil, err
