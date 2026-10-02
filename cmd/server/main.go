@@ -10,19 +10,24 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
-
 	"github.com/myzjc/SuperDisk/internal/handler"
+	"github.com/myzjc/SuperDisk/internal/pkg/jwt"
 	"github.com/myzjc/SuperDisk/internal/repository"
 	"github.com/myzjc/SuperDisk/internal/service"
 	"github.com/myzjc/SuperDisk/internal/storage"
+
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+
+	customMiddleware "github.com/myzjc/SuperDisk/internal/middleware"
 )
 
 const (
 	defaultPort       = ":8080"
 	defaultDBPath     = "netdisk.db"
 	defaultStorageDir = "./data/uploads"
+	jwtSecretKey      = "netdisk-secret-key-change-me-in-production"
+	jwtDuration       = 24 * time.Hour
 )
 
 func main() {
@@ -38,16 +43,20 @@ func main() {
 		log.Fatalf("Fatal: Failed to initialize disk storage: %v", err)
 	}
 
+	jwtManager := jwt.NewJWTManager(jwtSecretKey, jwtDuration)
+
 	fileService := service.NewFileService(db, diskStorage)
 	fileHandler := handler.NewFileHandler(fileService)
 
-	e := echo.New()
+	userService := service.NewUserService(db, jwtManager)
+	authHandler := handler.NewAuthHandler(userService)
 
+	e := echo.New()
 	e.HideBanner = true
 
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
-	e.Use(middleware.CORS())
+	e.Use(middleware.Logger())  // 记录请求日志
+	e.Use(middleware.Recover()) // 防止 panic 导致进程崩溃
+	e.Use(middleware.CORS())    // 支持跨域请求
 
 	e.GET("/ping", func(c echo.Context) error {
 		return c.String(http.StatusOK, "pong")
@@ -55,16 +64,26 @@ func main() {
 
 	api := e.Group("/api/v1")
 	{
-		files := api.Group("/files")
-		files.POST("", fileHandler.Upload)
-		files.GET("", fileHandler.List)
-		files.GET("/:id/content", fileHandler.Download)
-		files.PATCH("/:id", fileHandler.Rename)
-		files.DELETE("/:id", fileHandler.Delete)
+
+		authGroup := api.Group("/auth")
+		{
+			authGroup.POST("/register", authHandler.Register)
+			authGroup.POST("/login", authHandler.Login)
+		}
+
+		filesGroup := api.Group("/files")
+		filesGroup.Use(customMiddleware.JWTMiddleware(jwtManager))
+		{
+			filesGroup.POST("", fileHandler.Upload)              // 上传文件
+			filesGroup.GET("", fileHandler.List)                 // 查看已上传列表
+			filesGroup.GET("/:id/content", fileHandler.Download) // 流式下载文件
+			filesGroup.PATCH("/:id", fileHandler.Rename)         // 重命名文件
+			filesGroup.DELETE("/:id", fileHandler.Delete)        // 删除文件
+		}
 	}
 
 	go func() {
-		log.Printf("[Server] NetDisk is running at http://localhost%s\n", defaultPort)
+		log.Printf("[Server] NetDisk running at http://localhost%s\n", defaultPort)
 		if err := e.Start(defaultPort); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("Server startup failed: %v", err)
 		}
