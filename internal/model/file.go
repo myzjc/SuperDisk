@@ -7,7 +7,7 @@ import "time"
 type File struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
 	Filename    string    `gorm:"not null" json:"filename"`              // 用户看到的文件名
-	FolderID    uint      `gorm:"not null;index" json:"folder_id"`       // 所属文件夹ID
+	FolderID    uint      `gorm:"not null;default:0;index" json:"folder_id"` // 所属文件夹ID
 	UserID      uint      `gorm:"not null;index" json:"user_id"`         // 用户id
 	StorageName string    `gorm:"uniqueIndex;not null" json:"-"`         // 磁盘上的真实物理文件名（唯一索引）
 	FileSize    int64     `gorm:"not null" json:"file_size"`             // 文件字节大小

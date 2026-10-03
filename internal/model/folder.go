@@ -6,7 +6,7 @@ import "time"
 type Folder struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`                   // 文件夹唯一标识
 	Name      string    `gorm:"type:varchar(255);not null" json:"name"` // 文件夹名称
-	ParentID  *uint     `gorm:"index" json:"parent_id"`                 // 父文件夹 ID，为 nil 表示根目录
+	ParentID  uint      `gorm:"index" json:"parent_id"`                 // 父文件夹 ID，为 0 表示根目录
 	CreatedAt time.Time `json:"created_at"`                             // 创建时间
 	UpdatedAt time.Time `json:"updated_at"`                             // 更新时间
 }
@@ -15,7 +15,7 @@ type Folder struct {
 type FolderResponse struct {
 	ID        uint      `json:"id"`
 	Name      string    `json:"name"`
-	ParentID  *uint     `json:"parent_id"`
+	ParentID  uint      `json:"parent_id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

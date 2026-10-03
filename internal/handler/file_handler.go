@@ -29,6 +29,15 @@ func NewFileHandler(fs *service.FileService) *FileHandler {
 // Upload 流式上传文件
 // POST /api/v1/files
 func (h *FileHandler) Upload(c echo.Context) error {
+	var folderID uint
+	if fidStr := c.QueryParam("folder_id"); fidStr != "" {
+		parsed, err := strconv.ParseUint(fidStr, 10, 32)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "Invalid folder_id parameter")
+		}
+		folderID = uint(parsed)
+	}
+
 	req := c.Request()
 
 	reader, err := req.MultipartReader()
@@ -53,7 +62,7 @@ func (h *FileHandler) Upload(c echo.Context) error {
 				return echo.NewHTTPError(http.StatusBadRequest, "File name must not be empty")
 			}
 
-			resp, err := h.fileService.Upload(originalFilename, part)
+			resp, err := h.fileService.Upload(originalFilename, folderID, part)
 			if err != nil {
 				return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Upload failed: %v", err))
 			}

@@ -28,9 +28,16 @@ func NewFileService(db *gorm.DB, st storage.Storage) *FileService {
 }
 
 // Upload 协调流式存盘与元数据入库
-func (s *FileService) Upload(originalFilename string, src io.Reader) (*model.FileResponse, error) {
+func (s *FileService) Upload(originalFilename string, folderID uint, src io.Reader) (*model.FileResponse, error) {
 	if strings.TrimSpace(originalFilename) == "" {
 		return nil, errors.New("filename cannot be empty")
+	}
+
+	if folderID != 0 {
+		var folder model.Folder
+		if err := s.db.First(&folder, folderID).Error; err != nil {
+			return nil, errors.New("target folder not found")
+		}
 	}
 
 	relPath, writtenSize, err := s.storage.Save(src)
@@ -46,6 +53,7 @@ func (s *FileService) Upload(originalFilename string, src io.Reader) (*model.Fil
 
 	fileRecord := model.File{
 		Filename:    originalFilename,
+		FolderID:    folderID,
 		StorageName: relPath,
 		FileSize:    writtenSize,
 		ContentType: contentType,
@@ -129,11 +137,31 @@ func (s *FileService) Delete(id uint) error {
 	return nil
 }
 
+// MoveFile 移动文件到指定文件夹
+func (s *FileService) MoveFile(id uint, targetFolderID uint) (*model.FileResponse, error) {
+	var fileRecord model.File
+	if err := s.db.First(&fileRecord, id).Error; err != nil {
+		return nil, errors.New("file not found")
+	}
+	if targetFolderID != 0 {
+		var targetFolder model.Folder
+		if err := s.db.First(&targetFolder, targetFolderID).Error; err != nil {
+			return nil, errors.New("target folder not found")
+		}
+	}
+	fileRecord.FolderID = targetFolderID
+	if err := s.db.Save(&fileRecord).Error; err != nil {
+		return nil, err
+	}
+	return s.toResponse(&fileRecord), nil
+}
+
 // toResponse 将数据库 Model 转换为对外的 FileResponse，并动态生成下载相对路径
 func (s *FileService) toResponse(f *model.File) *model.FileResponse {
 	return &model.FileResponse{
 		ID:          f.ID,
 		Filename:    f.Filename,
+		FolderID:    f.FolderID,
 		FileSize:    f.FileSize,
 		ContentType: f.ContentType,
 		DownloadURL: fmt.Sprintf("/api/v1/files/%d/content", f.ID),
