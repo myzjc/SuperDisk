@@ -48,6 +48,8 @@ func main() {
 	fileService := service.NewFileService(db, diskStorage)
 	fileHandler := handler.NewFileHandler(fileService)
 
+	folderService := service.NewFolderService(db, diskStorage)
+	folderHandler := handler.NewFolderHandler(folderService)
 	userService := service.NewUserService(db, jwtManager)
 	authHandler := handler.NewAuthHandler(userService)
 
@@ -79,6 +81,17 @@ func main() {
 			filesGroup.GET("/:id/content", fileHandler.Download) // 流式下载文件
 			filesGroup.PATCH("/:id", fileHandler.Rename)         // 重命名文件
 			filesGroup.DELETE("/:id", fileHandler.Delete)        // 删除文件
+			filesGroup.PATCH("/:id/move", fileHandler.Move)      // 移动文件到目标文件夹
+		}
+		foldersGroup := api.Group("/folders")
+		foldersGroup.Use(customMiddleware.JWTMiddleware(jwtManager))
+		{
+			foldersGroup.POST("", folderHandler.Create)                        // 新建文件夹
+			foldersGroup.PATCH("/:id", folderHandler.Rename)                   // 重命名文件夹
+			foldersGroup.PATCH("/:id/move", folderHandler.Move)                // 移动文件夹到目标文件夹
+			foldersGroup.DELETE("/:id", folderHandler.Delete)                  // 删除文件夹
+			foldersGroup.GET("/contents", folderHandler.GetRootContents)       // 获取根目录内容
+			foldersGroup.GET("/:id/contents", folderHandler.GetFolderContents) // 获取指定目录内容
 		}
 	}
 

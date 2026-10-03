@@ -149,3 +149,26 @@ func (h *FileHandler) Delete(c echo.Context) error {
 
 	return c.NoContent(http.StatusNoContent)
 }
+
+// MoveFileReq 文件移动请求体
+type MoveFileReq struct {
+	TargetFolderID uint `json:"target_folder_id"` // 目标文件夹 ID
+}
+
+// Move 移动文件到目标文件夹
+// PATCH /api/v1/files/:id/move
+func (h *FileHandler) Move(c echo.Context) error {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid file ID")
+	}
+	var req MoveFileReq
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
+	}
+	updated, err := h.fileService.MoveFile(uint(id), req.TargetFolderID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	return c.JSON(http.StatusOK, updated)
+}
