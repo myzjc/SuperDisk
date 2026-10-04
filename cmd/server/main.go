@@ -47,9 +47,10 @@ func main() {
 
 	fileService := service.NewFileService(db, diskStorage)
 	fileHandler := handler.NewFileHandler(fileService)
-
 	folderService := service.NewFolderService(db, diskStorage)
 	folderHandler := handler.NewFolderHandler(folderService)
+	shareService := service.NewShareService(db, diskStorage, folderService)
+	shareHandler := handler.NewShareHandler(shareService)
 	userService := service.NewUserService(db, jwtManager)
 	authHandler := handler.NewAuthHandler(userService)
 
@@ -92,6 +93,19 @@ func main() {
 			foldersGroup.DELETE("/:id", folderHandler.Delete)                  // 删除文件夹
 			foldersGroup.GET("/contents", folderHandler.GetRootContents)       // 获取根目录内容
 			foldersGroup.GET("/:id/contents", folderHandler.GetFolderContents) // 获取指定目录内容
+		}
+		sharesGroup := api.Group("/shares")
+		sharesGroup.Use(customMiddleware.JWTMiddleware(jwtManager))
+		{
+			sharesGroup.POST("", shareHandler.Create)               // 创建分享
+			sharesGroup.GET("/:code", shareHandler.GetPublicDetail) // 获取分享详情
+			sharesGroup.DELETE("/:code", shareHandler.Delete)       // 删除分享
+			sharesGroup.GET("", shareHandler.List)                  // 查看所有分享
+		}
+		publicSharesGroup := api.Group("/public/shares")
+		{
+			publicSharesGroup.GET("/:code", shareHandler.GetPublicDetail)             // 公开查看分享详情
+			publicSharesGroup.GET("/:code/download", shareHandler.DownloadPublicFile) // 流式下载分享的文件
 		}
 	}
 
