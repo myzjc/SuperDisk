@@ -126,10 +126,15 @@ func (s *FileService) Delete(id uint) error {
 		return errors.New("file not found")
 	}
 
-	if err := s.db.Delete(&fileRecord).Error; err != nil {
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&fileRecord).Error; err != nil {
+			return err
+		}
+		return tx.Where("target_type = ? AND target_id = ?", model.ShareTypeFile, id).Delete(&model.Share{}).Error
+	})
+	if err != nil {
 		return fmt.Errorf("failed to delete database record: %w", err)
 	}
-
 	if err := s.storage.Delete(fileRecord.StorageName); err != nil {
 		fmt.Printf("warning: failed to delete physical file %s: %v\n", fileRecord.StorageName, err)
 	}

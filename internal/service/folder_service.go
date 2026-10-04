@@ -149,6 +149,7 @@ func (s *FolderService) MoveFolder(id uint, targetParentID uint) (*model.FolderR
 	return s.toResponse(&folder), nil
 }
 
+// DeleteFolder 删除文件夹及其所有子文件夹和文件
 func (s *FolderService) DeleteFolder(id uint) error {
 	var rootFolder model.Folder
 	if err := s.db.First(&rootFolder, id).Error; err != nil {
@@ -182,10 +183,22 @@ func (s *FolderService) DeleteFolder(id uint) error {
 
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if len(filesToDelete) > 0 {
+			var fileIDs []uint
+			for _, f := range filesToDelete {
+				fileIDs = append(fileIDs, f.ID)
+			}
+			if err := tx.Where("target_type = ? AND target_id IN ?", model.ShareTypeFile, fileIDs).Delete(&model.Share{}).Error; err != nil {
+				return err
+			}
 			if err := tx.Where("folder_id IN ?", allFolderIDs).Delete(&model.File{}).Error; err != nil {
 				return err
 			}
 		}
+
+		if err := tx.Where("target_type = ? AND target_id IN ?", model.ShareTypeFolder, allFolderIDs).Delete(&model.Share{}).Error; err != nil {
+			return err
+		}
+
 		if err := tx.Where("id IN ?", allFolderIDs).Delete(&model.Folder{}).Error; err != nil {
 			return err
 		}
@@ -255,6 +268,7 @@ func (s *FolderService) GetFolderContents(folderID uint) (*model.FolderContentRe
 	}, nil
 }
 
+// toResponse 将数据库 Model 转换为对外的 FolderResponse
 func (s *FolderService) toResponse(f *model.Folder) *model.FolderResponse {
 	return &model.FolderResponse{
 		ID:        f.ID,
