@@ -20,7 +20,7 @@ type FolderResponse struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// FolderContentResponse 用于获取某个目录下的全部内容（包含子文件夹和文件）
+// FolderContentResponse 用于获取某个目录下的全部内容
 type FolderContentResponse struct {
 	CurrentFolder *FolderResponse   `json:"current_folder"` // 当前目录信息（根目录时为 nil）
 	Folders       []*FolderResponse `json:"folders"`        // 子文件夹列表

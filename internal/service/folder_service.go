@@ -204,7 +204,7 @@ func (s *FolderService) DeleteFolder(id uint) error {
 	return nil
 }
 
-// GetFolderContents 获取指定目录下的内容（folderID 为 0 代表根目录）
+// GetFolderContents 获取指定目录下的内容
 func (s *FolderService) GetFolderContents(folderID uint) (*model.FolderContentResponse, error) {
 	var currentFolder *model.FolderResponse
 
