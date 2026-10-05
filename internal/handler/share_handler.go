@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/labstack/echo/v4"
+	"github.com/myzjc/SuperDisk/internal/middleware"
 	"github.com/myzjc/SuperDisk/internal/service"
 )
 
@@ -27,15 +28,20 @@ type CreateShareReq struct {
 	TargetID   uint   `json:"target_id"`   // 目标 ID
 }
 
-// Create 创建分享链接
+// Create 创建分享链接（需登录）
 // POST /api/v1/shares
 func (h *ShareHandler) Create(c echo.Context) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
+	}
+
 	var req CreateShareReq
 	if err := c.Bind(&req); err != nil || req.TargetType == "" || req.TargetID == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body: 'target_type' and 'target_id' are required")
 	}
 
-	resp, err := h.shareService.CreateShare(req.TargetType, req.TargetID)
+	resp, err := h.shareService.CreateShare(userID, req.TargetType, req.TargetID)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidShareTarget) {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -46,25 +52,35 @@ func (h *ShareHandler) Create(c echo.Context) error {
 	return c.JSON(http.StatusCreated, resp)
 }
 
-// List 列出当前所有的分享链接
+// List 列出当前登录用户的分享链接（需登录）
 // GET /api/v1/shares
 func (h *ShareHandler) List(c echo.Context) error {
-	shares, err := h.shareService.ListShares()
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
+	}
+
+	shares, err := h.shareService.ListShares(userID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("Failed to list shares: %v", err))
 	}
 	return c.JSON(http.StatusOK, shares)
 }
 
-// Delete 删除/取消分享链接
+// Delete 删除分享链接（需登录）
 // DELETE /api/v1/shares/:id
 func (h *ShareHandler) Delete(c echo.Context) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
+	}
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid share ID")
 	}
 
-	if err := h.shareService.DeleteShare(uint(id)); err != nil {
+	if err := h.shareService.DeleteShare(userID, uint(id)); err != nil {
 		if errors.Is(err, service.ErrShareNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, err.Error())
 		}
@@ -110,13 +126,14 @@ func (h *ShareHandler) DownloadPublicFile(c echo.Context) error {
 	}
 	defer stream.Close()
 
+	// 编码文件名并配置 Content-Disposition，从 Blob 读取实际物理大小和类型
 	encodedFilename := url.PathEscape(fileRecord.Filename)
 	contentDisposition := fmt.Sprintf("attachment; filename=\"%s\"; filename*=UTF-8''%s", encodedFilename, encodedFilename)
 	c.Response().Header().Set(echo.HeaderContentDisposition, contentDisposition)
 
-	if fileRecord.FileSize > 0 {
-		c.Response().Header().Set(echo.HeaderContentLength, strconv.FormatInt(fileRecord.FileSize, 10))
+	if fileRecord.Blob.FileSize > 0 {
+		c.Response().Header().Set(echo.HeaderContentLength, strconv.FormatInt(fileRecord.Blob.FileSize, 10))
 	}
 
-	return c.Stream(http.StatusOK, fileRecord.ContentType, stream)
+	return c.Stream(http.StatusOK, fileRecord.Blob.ContentType, stream)
 }

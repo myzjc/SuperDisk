@@ -51,15 +51,15 @@ func main() {
 	folderHandler := handler.NewFolderHandler(folderService)
 	shareService := service.NewShareService(db, diskStorage, folderService)
 	shareHandler := handler.NewShareHandler(shareService)
-	userService := service.NewUserService(db, jwtManager)
+	userService := service.NewUserService(db, jwtManager, diskStorage)
 	authHandler := handler.NewAuthHandler(userService)
 
 	e := echo.New()
 	e.HideBanner = true
 
-	e.Use(middleware.Logger())  // 记录请求日志
-	e.Use(middleware.Recover()) // 防止 panic 导致进程崩溃
-	e.Use(middleware.CORS())    // 支持跨域请求
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recover())
+	e.Use(middleware.CORS())
 
 	e.GET("/ping", func(c echo.Context) error {
 		return c.String(http.StatusOK, "pong")
@@ -67,45 +67,51 @@ func main() {
 
 	api := e.Group("/api/v1")
 	{
-
 		authGroup := api.Group("/auth")
 		{
 			authGroup.POST("/register", authHandler.Register)
 			authGroup.POST("/login", authHandler.Login)
 		}
-
+		usersGroup := api.Group("/users")
+		usersGroup.Use(customMiddleware.JWTMiddleware(jwtManager, db))
+		{
+			usersGroup.GET("/me", authHandler.GetProfile)
+			usersGroup.PATCH("/me", authHandler.UpdateProfile)
+			usersGroup.PUT("/me/password", authHandler.ChangePassword)
+			usersGroup.POST("/logout", authHandler.Logout)
+			usersGroup.DELETE("/me", authHandler.DeleteAccount)
+		}
 		filesGroup := api.Group("/files")
-		filesGroup.Use(customMiddleware.JWTMiddleware(jwtManager))
-		{
-			filesGroup.POST("", fileHandler.Upload)              // 上传文件
-			filesGroup.GET("", fileHandler.List)                 // 查看已上传列表
-			filesGroup.GET("/:id/content", fileHandler.Download) // 流式下载文件
-			filesGroup.PATCH("/:id", fileHandler.Rename)         // 重命名文件
-			filesGroup.DELETE("/:id", fileHandler.Delete)        // 删除文件
-			filesGroup.PATCH("/:id/move", fileHandler.Move)      // 移动文件到目标文件夹
-		}
-		foldersGroup := api.Group("/folders")
-		foldersGroup.Use(customMiddleware.JWTMiddleware(jwtManager))
-		{
-			foldersGroup.POST("", folderHandler.Create)                        // 新建文件夹
-			foldersGroup.PATCH("/:id", folderHandler.Rename)                   // 重命名文件夹
-			foldersGroup.PATCH("/:id/move", folderHandler.Move)                // 移动文件夹到目标文件夹
-			foldersGroup.DELETE("/:id", folderHandler.Delete)                  // 删除文件夹
-			foldersGroup.GET("/contents", folderHandler.GetRootContents)       // 获取根目录内容
-			foldersGroup.GET("/:id/contents", folderHandler.GetFolderContents) // 获取指定目录内容
-		}
+		filesGroup.Use(customMiddleware.JWTMiddleware(jwtManager, db))
+
+		filesGroup.POST("", fileHandler.Upload)
+		filesGroup.GET("", fileHandler.List)
+		filesGroup.GET("/:id/content", fileHandler.Download)
+		filesGroup.PATCH("/:id", fileHandler.Rename)
+		filesGroup.PATCH("/:id/move", fileHandler.Move)
+		filesGroup.DELETE("/:id", fileHandler.Delete)
+	}
+	foldersGroup := api.Group("/folders")
+	foldersGroup.Use(customMiddleware.JWTMiddleware(jwtManager, db))
+	{
+		foldersGroup.POST("", folderHandler.Create)
+		foldersGroup.GET("/contents", folderHandler.GetRootContents)
+		foldersGroup.GET("/:id/contents", folderHandler.GetFolderContents)
+		foldersGroup.PATCH("/:id", folderHandler.Rename)
+		foldersGroup.PATCH("/:id/move", folderHandler.Move)
+		foldersGroup.DELETE("/:id", folderHandler.Delete)
+	}
+	publicSharesGroup := api.Group("/public/shares")
+	{
+		publicSharesGroup.GET("/:code", shareHandler.GetPublicDetail)
+		publicSharesGroup.GET("/:code/download", shareHandler.DownloadPublicFile)
+
 		sharesGroup := api.Group("/shares")
-		sharesGroup.Use(customMiddleware.JWTMiddleware(jwtManager))
+		sharesGroup.Use(customMiddleware.JWTMiddleware(jwtManager, db))
 		{
-			sharesGroup.POST("", shareHandler.Create)               // 创建分享
-			sharesGroup.GET("/:code", shareHandler.GetPublicDetail) // 获取分享详情
-			sharesGroup.DELETE("/:code", shareHandler.Delete)       // 删除分享
-			sharesGroup.GET("", shareHandler.List)                  // 查看所有分享
-		}
-		publicSharesGroup := api.Group("/public/shares")
-		{
-			publicSharesGroup.GET("/:code", shareHandler.GetPublicDetail)             // 公开查看分享详情
-			publicSharesGroup.GET("/:code/download", shareHandler.DownloadPublicFile) // 流式下载分享的文件
+			sharesGroup.POST("", shareHandler.Create)
+			sharesGroup.GET("", shareHandler.List)
+			sharesGroup.DELETE("/:id", shareHandler.Delete)
 		}
 	}
 
