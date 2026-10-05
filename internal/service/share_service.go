@@ -34,7 +34,7 @@ func NewShareService(db *gorm.DB, st storage.Storage, fs *FolderService) *ShareS
 }
 
 // CreateShare 创建分享链接
-func (s *ShareService) CreateShare(targetType string, targetID uint) (*model.ShareResponse, error) {
+func (s *ShareService) CreateShare(userID uint, targetType string, targetID uint) (*model.ShareResponse, error) {
 	if targetType != model.ShareTypeFile && targetType != model.ShareTypeFolder {
 		return nil, ErrInvalidShareTarget
 	}
@@ -43,18 +43,18 @@ func (s *ShareService) CreateShare(targetType string, targetID uint) (*model.Sha
 
 	if targetType == model.ShareTypeFile {
 		var f model.File
-		if err := s.db.First(&f, targetID).Error; err != nil {
+		if err := s.db.Where("id = ? AND user_id = ?", targetID, userID).First(&f).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, errors.New("file not found")
+				return nil, errors.New("file not found or access denied")
 			}
 			return nil, err
 		}
 		targetName = f.Filename
 	} else {
 		var f model.Folder
-		if err := s.db.First(&f, targetID).Error; err != nil {
+		if err := s.db.Where("id = ? AND user_id = ?", targetID, userID).First(&f).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, errors.New("folder not found")
+				return nil, errors.New("folder not found or access denied")
 			}
 			return nil, err
 		}
@@ -70,6 +70,7 @@ func (s *ShareService) CreateShare(targetType string, targetID uint) (*model.Sha
 		ShareCode:  shareCode,
 		TargetType: targetType,
 		TargetID:   targetID,
+		UserID:     userID,
 	}
 
 	if err := s.db.Create(&share).Error; err != nil {
@@ -87,10 +88,10 @@ func (s *ShareService) CreateShare(targetType string, targetID uint) (*model.Sha
 	}, nil
 }
 
-// ListShares 列出所有分享链接
-func (s *ShareService) ListShares() ([]*model.ShareResponse, error) {
+// ListShares 仅列出当前登录用户的分享链接
+func (s *ShareService) ListShares(userID uint) ([]*model.ShareResponse, error) {
 	var shares []model.Share
-	if err := s.db.Order("created_at desc").Find(&shares).Error; err != nil {
+	if err := s.db.Where("user_id = ?", userID).Order("created_at desc").Find(&shares).Error; err != nil {
 		return nil, err
 	}
 
@@ -99,12 +100,12 @@ func (s *ShareService) ListShares() ([]*model.ShareResponse, error) {
 		targetName := "[已失效或已被删除]"
 		if share.TargetType == model.ShareTypeFile {
 			var f model.File
-			if err := s.db.Select("filename").First(&f, share.TargetID).Error; err == nil {
+			if err := s.db.Select("filename").Where("id = ? AND user_id = ?", share.TargetID, userID).First(&f).Error; err == nil {
 				targetName = f.Filename
 			}
 		} else {
 			var f model.Folder
-			if err := s.db.Select("name").First(&f, share.TargetID).Error; err == nil {
+			if err := s.db.Select("name").Where("id = ? AND user_id = ?", share.TargetID, userID).First(&f).Error; err == nil {
 				targetName = f.Name
 			}
 		}
@@ -124,9 +125,9 @@ func (s *ShareService) ListShares() ([]*model.ShareResponse, error) {
 }
 
 // DeleteShare 删除指定的分享链接
-func (s *ShareService) DeleteShare(id uint) error {
+func (s *ShareService) DeleteShare(userID uint, id uint) error {
 	var share model.Share
-	if err := s.db.First(&share, id).Error; err != nil {
+	if err := s.db.Where("id = ? AND user_id = ?", id, userID).First(&share).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrShareNotFound
 		}
@@ -153,7 +154,8 @@ func (s *ShareService) GetPublicShareDetail(shareCode string) (*model.PublicShar
 
 	if share.TargetType == model.ShareTypeFile {
 		var f model.File
-		if err := s.db.First(&f, share.TargetID).Error; err != nil {
+		// 预加载 Blob 物理块
+		if err := s.db.Preload("Blob").First(&f, share.TargetID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, ErrShareTargetNotFound
 			}
@@ -163,14 +165,16 @@ func (s *ShareService) GetPublicShareDetail(shareCode string) (*model.PublicShar
 			ID:          f.ID,
 			Filename:    f.Filename,
 			FolderID:    f.FolderID,
-			FileSize:    f.FileSize,
-			ContentType: f.ContentType,
+			UserID:      f.UserID,
+			FileSize:    f.Blob.FileSize,
+			ContentType: f.Blob.ContentType,
+			FileHash:    f.Blob.FileHash,
 			DownloadURL: fmt.Sprintf("/api/v1/public/shares/%s/download", share.ShareCode),
 			CreatedAt:   f.CreatedAt,
 			UpdatedAt:   f.UpdatedAt,
 		}
 	} else {
-		contents, err := s.folderService.GetFolderContents(share.TargetID)
+		contents, err := s.folderService.GetFolderContents(share.UserID, share.TargetID)
 		if err != nil {
 			if errors.Is(err, ErrFolderNotFound) {
 				return nil, ErrShareTargetNotFound
@@ -198,14 +202,15 @@ func (s *ShareService) DownloadSharedFile(shareCode string) (*model.File, io.Rea
 	}
 
 	var f model.File
-	if err := s.db.First(&f, share.TargetID).Error; err != nil {
+	// 预加载 Blob 以获取真实的物理磁盘路径 StorageName
+	if err := s.db.Preload("Blob").First(&f, share.TargetID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil, ErrShareTargetNotFound
 		}
 		return nil, nil, err
 	}
 
-	stream, err := s.storage.Open(f.StorageName)
+	stream, err := s.storage.Open(f.Blob.StorageName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open physical storage: %w", err)
 	}
@@ -213,7 +218,6 @@ func (s *ShareService) DownloadSharedFile(shareCode string) (*model.File, io.Rea
 	return &f, stream, nil
 }
 
-// generateShareCode 生成随机字符串
 func generateShareCode(byteLen int) (string, error) {
 	bytes := make([]byte, byteLen)
 	if _, err := rand.Read(bytes); err != nil {

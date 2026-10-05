@@ -7,19 +7,19 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
+	"gorm.io/gorm"
 
+	"github.com/myzjc/SuperDisk/internal/model"
 	"github.com/myzjc/SuperDisk/internal/pkg/jwt"
 )
 
 const (
-	// ContextKeyUserID 用户 ID 在 Echo Context 中的存取键名
-	ContextKeyUserID = "userID"
-	// ContextKeyUsername 用户名在 Echo Context 中的存取键名
+	ContextKeyUserID   = "userID"
 	ContextKeyUsername = "username"
 )
 
 // JWTMiddleware 创建一个 JWT 身份验证中间件
-func JWTMiddleware(jwtManager *jwt.JWTManager) echo.MiddlewareFunc {
+func JWTMiddleware(jwtManager *jwt.JWTManager, db *gorm.DB) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			tokenStr := extractToken(c)
@@ -33,6 +33,18 @@ func JWTMiddleware(jwtManager *jwt.JWTManager) echo.MiddlewareFunc {
 					return echo.NewHTTPError(http.StatusUnauthorized, "Token has expired, please log in again")
 				}
 				return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token")
+			}
+
+			var user model.User
+			if err := db.Select("token_version").First(&user, claims.UserID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return echo.NewHTTPError(http.StatusUnauthorized, "User account no longer exists")
+				}
+				return echo.NewHTTPError(http.StatusInternalServerError, "Failed to verify authentication status")
+			}
+
+			if claims.TokenVersion < user.TokenVersion {
+				return echo.NewHTTPError(http.StatusUnauthorized, "Token has been invalidated (logged out or password changed)")
 			}
 
 			c.Set(ContextKeyUserID, claims.UserID)

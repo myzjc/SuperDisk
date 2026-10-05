@@ -30,8 +30,7 @@ func NewFolderService(db *gorm.DB, st storage.Storage) *FolderService {
 	}
 }
 
-// CreateFolder 创建文件夹
-func (s *FolderService) CreateFolder(name string, parentID uint) (*model.FolderResponse, error) {
+func (s *FolderService) CreateFolder(userID uint, name string, parentID uint) (*model.FolderResponse, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || strings.ContainsAny(name, `/\:*?"<>|`) {
 		return nil, ErrInvalidFolderName
@@ -39,7 +38,7 @@ func (s *FolderService) CreateFolder(name string, parentID uint) (*model.FolderR
 
 	if parentID != 0 {
 		var parent model.Folder
-		if err := s.db.First(&parent, parentID).Error; err != nil {
+		if err := s.db.Where("id = ? AND user_id = ?", parentID, userID).First(&parent).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errors.New("parent folder not found")
 			}
@@ -48,7 +47,7 @@ func (s *FolderService) CreateFolder(name string, parentID uint) (*model.FolderR
 	}
 
 	var count int64
-	if err := s.db.Model(&model.Folder{}).Where("name = ? AND parent_id = ?", name, parentID).Count(&count).Error; err != nil {
+	if err := s.db.Model(&model.Folder{}).Where("user_id = ? AND name = ? AND parent_id = ?", userID, name, parentID).Count(&count).Error; err != nil {
 		return nil, err
 	}
 	if count > 0 {
@@ -58,6 +57,7 @@ func (s *FolderService) CreateFolder(name string, parentID uint) (*model.FolderR
 	folder := model.Folder{
 		Name:     name,
 		ParentID: parentID,
+		UserID:   userID,
 	}
 	if err := s.db.Create(&folder).Error; err != nil {
 		return nil, err
@@ -66,15 +66,14 @@ func (s *FolderService) CreateFolder(name string, parentID uint) (*model.FolderR
 	return s.toResponse(&folder), nil
 }
 
-// RenameFolder 重命名文件夹
-func (s *FolderService) RenameFolder(id uint, newName string) (*model.FolderResponse, error) {
+func (s *FolderService) RenameFolder(userID uint, id uint, newName string) (*model.FolderResponse, error) {
 	newName = strings.TrimSpace(newName)
 	if newName == "" || strings.ContainsAny(newName, `/\:*?"<>|`) {
 		return nil, ErrInvalidFolderName
 	}
 
 	var folder model.Folder
-	if err := s.db.First(&folder, id).Error; err != nil {
+	if err := s.db.Where("id = ? AND user_id = ?", id, userID).First(&folder).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrFolderNotFound
 		}
@@ -82,7 +81,7 @@ func (s *FolderService) RenameFolder(id uint, newName string) (*model.FolderResp
 	}
 
 	var count int64
-	if err := s.db.Model(&model.Folder{}).Where("name = ? AND parent_id = ? AND id != ?", newName, folder.ParentID, id).Count(&count).Error; err != nil {
+	if err := s.db.Model(&model.Folder{}).Where("user_id = ? AND name = ? AND parent_id = ? AND id != ?", userID, newName, folder.ParentID, id).Count(&count).Error; err != nil {
 		return nil, err
 	}
 	if count > 0 {
@@ -97,10 +96,9 @@ func (s *FolderService) RenameFolder(id uint, newName string) (*model.FolderResp
 	return s.toResponse(&folder), nil
 }
 
-// MoveFolder 移动文件夹
-func (s *FolderService) MoveFolder(id uint, targetParentID uint) (*model.FolderResponse, error) {
+func (s *FolderService) MoveFolder(userID uint, id uint, targetParentID uint) (*model.FolderResponse, error) {
 	var folder model.Folder
-	if err := s.db.First(&folder, id).Error; err != nil {
+	if err := s.db.Where("id = ? AND user_id = ?", id, userID).First(&folder).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrFolderNotFound
 		}
@@ -113,7 +111,7 @@ func (s *FolderService) MoveFolder(id uint, targetParentID uint) (*model.FolderR
 
 	if targetParentID != 0 {
 		var targetFolder model.Folder
-		if err := s.db.First(&targetFolder, targetParentID).Error; err != nil {
+		if err := s.db.Where("id = ? AND user_id = ?", targetParentID, userID).First(&targetFolder).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errors.New("target folder not found")
 			}
@@ -126,7 +124,7 @@ func (s *FolderService) MoveFolder(id uint, targetParentID uint) (*model.FolderR
 				return nil, ErrCannotMoveToChild
 			}
 			var ancestor model.Folder
-			if err := s.db.First(&ancestor, currParentID).Error; err != nil {
+			if err := s.db.Where("id = ? AND user_id = ?", currParentID, userID).First(&ancestor).Error; err != nil {
 				break
 			}
 			currParentID = ancestor.ParentID
@@ -134,7 +132,7 @@ func (s *FolderService) MoveFolder(id uint, targetParentID uint) (*model.FolderR
 	}
 
 	var count int64
-	if err := s.db.Model(&model.Folder{}).Where("name = ? AND parent_id = ? AND id != ?", folder.Name, targetParentID, id).Count(&count).Error; err != nil {
+	if err := s.db.Model(&model.Folder{}).Where("user_id = ? AND name = ? AND parent_id = ? AND id != ?", userID, folder.Name, targetParentID, id).Count(&count).Error; err != nil {
 		return nil, err
 	}
 	if count > 0 {
@@ -149,10 +147,9 @@ func (s *FolderService) MoveFolder(id uint, targetParentID uint) (*model.FolderR
 	return s.toResponse(&folder), nil
 }
 
-// DeleteFolder 删除文件夹及其所有子文件夹和文件
-func (s *FolderService) DeleteFolder(id uint) error {
+func (s *FolderService) DeleteFolder(userID uint, id uint) error {
 	var rootFolder model.Folder
-	if err := s.db.First(&rootFolder, id).Error; err != nil {
+	if err := s.db.Where("id = ? AND user_id = ?", id, userID).First(&rootFolder).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrFolderNotFound
 		}
@@ -167,7 +164,7 @@ func (s *FolderService) DeleteFolder(id uint) error {
 		queue = queue[1:]
 
 		var subIDs []uint
-		if err := s.db.Model(&model.Folder{}).Where("parent_id = ?", currID).Pluck("id", &subIDs).Error; err != nil {
+		if err := s.db.Model(&model.Folder{}).Where("user_id = ? AND parent_id = ?", userID, currID).Pluck("id", &subIDs).Error; err != nil {
 			return err
 		}
 		for _, sid := range subIDs {
@@ -177,9 +174,11 @@ func (s *FolderService) DeleteFolder(id uint) error {
 	}
 
 	var filesToDelete []model.File
-	if err := s.db.Where("folder_id IN ?", allFolderIDs).Find(&filesToDelete).Error; err != nil {
+	if err := s.db.Preload("Blob").Where("user_id = ? AND folder_id IN ?", userID, allFolderIDs).Find(&filesToDelete).Error; err != nil {
 		return err
 	}
+
+	var blobsToPhysicalDelete []model.FileBlob
 
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if len(filesToDelete) > 0 {
@@ -187,43 +186,48 @@ func (s *FolderService) DeleteFolder(id uint) error {
 			for _, f := range filesToDelete {
 				fileIDs = append(fileIDs, f.ID)
 			}
-			if err := tx.Where("target_type = ? AND target_id IN ?", model.ShareTypeFile, fileIDs).Delete(&model.Share{}).Error; err != nil {
+			_ = tx.Where("target_type = ? AND target_id IN ?", model.ShareTypeFile, fileIDs).Delete(&model.Share{}).Error
+
+			if err := tx.Where("user_id = ? AND folder_id IN ?", userID, allFolderIDs).Delete(&model.File{}).Error; err != nil {
 				return err
 			}
-			if err := tx.Where("folder_id IN ?", allFolderIDs).Delete(&model.File{}).Error; err != nil {
-				return err
+
+			for _, f := range filesToDelete {
+				f.Blob.RefCount--
+				if f.Blob.RefCount <= 0 {
+					blobsToPhysicalDelete = append(blobsToPhysicalDelete, f.Blob)
+					if err := tx.Delete(&f.Blob).Error; err != nil {
+						return err
+					}
+				} else {
+					if err := tx.Save(&f.Blob).Error; err != nil {
+						return err
+					}
+				}
 			}
 		}
 
-		if err := tx.Where("target_type = ? AND target_id IN ?", model.ShareTypeFolder, allFolderIDs).Delete(&model.Share{}).Error; err != nil {
-			return err
-		}
+		_ = tx.Where("target_type = ? AND target_id IN ?", model.ShareTypeFolder, allFolderIDs).Delete(&model.Share{}).Error
 
-		if err := tx.Where("id IN ?", allFolderIDs).Delete(&model.Folder{}).Error; err != nil {
-			return err
-		}
-		return nil
+		return tx.Where("user_id = ? AND id IN ?", userID, allFolderIDs).Delete(&model.Folder{}).Error
 	})
 	if err != nil {
 		return fmt.Errorf("failed to delete database records: %w", err)
 	}
 
-	for _, f := range filesToDelete {
-		if err := s.storage.Delete(f.StorageName); err != nil {
-			fmt.Printf("warning: failed to delete physical file %s: %v\n", f.StorageName, err)
-		}
+	for _, b := range blobsToPhysicalDelete {
+		_ = s.storage.Delete(b.StorageName)
 	}
 
 	return nil
 }
 
-// GetFolderContents 获取指定目录下的内容
-func (s *FolderService) GetFolderContents(folderID uint) (*model.FolderContentResponse, error) {
+func (s *FolderService) GetFolderContents(userID uint, folderID uint) (*model.FolderContentResponse, error) {
 	var currentFolder *model.FolderResponse
 
 	if folderID != 0 {
 		var f model.Folder
-		if err := s.db.First(&f, folderID).Error; err != nil {
+		if err := s.db.Where("id = ? AND user_id = ?", folderID, userID).First(&f).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, ErrFolderNotFound
 			}
@@ -233,12 +237,12 @@ func (s *FolderService) GetFolderContents(folderID uint) (*model.FolderContentRe
 	}
 
 	var folders []model.Folder
-	if err := s.db.Order("name asc").Where("parent_id = ?", folderID).Find(&folders).Error; err != nil {
+	if err := s.db.Order("name asc").Where("user_id = ? AND parent_id = ?", userID, folderID).Find(&folders).Error; err != nil {
 		return nil, err
 	}
 
 	var files []model.File
-	if err := s.db.Order("created_at desc").Where("folder_id = ?", folderID).Find(&files).Error; err != nil {
+	if err := s.db.Preload("Blob").Order("created_at desc").Where("user_id = ? AND folder_id = ?", userID, folderID).Find(&files).Error; err != nil {
 		return nil, err
 	}
 
@@ -253,8 +257,10 @@ func (s *FolderService) GetFolderContents(folderID uint) (*model.FolderContentRe
 			ID:          file.ID,
 			Filename:    file.Filename,
 			FolderID:    file.FolderID,
-			FileSize:    file.FileSize,
-			ContentType: file.ContentType,
+			UserID:      file.UserID,
+			FileSize:    file.Blob.FileSize,
+			ContentType: file.Blob.ContentType,
+			FileHash:    file.Blob.FileHash,
 			DownloadURL: fmt.Sprintf("/api/v1/files/%d/content", file.ID),
 			CreatedAt:   file.CreatedAt,
 			UpdatedAt:   file.UpdatedAt,
@@ -268,12 +274,12 @@ func (s *FolderService) GetFolderContents(folderID uint) (*model.FolderContentRe
 	}, nil
 }
 
-// toResponse 将数据库 Model 转换为对外的 FolderResponse
 func (s *FolderService) toResponse(f *model.Folder) *model.FolderResponse {
 	return &model.FolderResponse{
 		ID:        f.ID,
 		Name:      f.Name,
 		ParentID:  f.ParentID,
+		UserID:    f.UserID,
 		CreatedAt: f.CreatedAt,
 		UpdatedAt: f.UpdatedAt,
 	}

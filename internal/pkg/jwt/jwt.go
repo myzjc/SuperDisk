@@ -16,8 +16,9 @@ var (
 
 // CustomClaims 自定义载荷结构体
 type CustomClaims struct {
-	UserID   uint   `json:"user_id"`
-	Username string `json:"username"`
+	UserID       uint   `json:"user_id"`
+	Username     string `json:"username"`
+	TokenVersion uint   `json:"token_version"`
 	jwt.RegisteredClaims
 }
 
@@ -38,29 +39,22 @@ func NewJWTManager(secretKey string, tokenDuration time.Duration) *JWTManager {
 }
 
 // GenerateToken 为指定用户签发一个 JWT 字符串
-func (m *JWTManager) GenerateToken(userID uint, username string) (string, error) {
+func (m *JWTManager) GenerateToken(userID uint, username string, tokenVersion uint) (string, error) {
 	now := time.Now()
 	expiresAt := now.Add(m.tokenDuration)
-
 	claims := CustomClaims{
-		UserID:   userID,
-		Username: username,
+		UserID:       userID,
+		Username:     username,
+		TokenVersion: tokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expiresAt), // 过期时间
-			IssuedAt:  jwt.NewNumericDate(now),       // 签发时间
-			NotBefore: jwt.NewNumericDate(now),       // 生效时间
-			Issuer:    m.issuer,                      // 签发主体
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+			Issuer:    m.issuer,
 		},
 	}
-
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	signedToken, err := token.SignedString(m.secretKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to sign token: %w", err)
-	}
-
-	return signedToken, nil
+	return token.SignedString(m.secretKey)
 }
 
 // ParseToken 解析并校验 Token 字符串，返回用户 Claims

@@ -2,6 +2,8 @@
 package storage
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +16,7 @@ import (
 )
 
 type Storage interface {
-	Save(src io.Reader) (relPath string, size int64, err error)
+	Save(src io.Reader) (relPath string, size int64, hash string, err error)
 	Open(relPath string) (io.ReadCloser, error)
 	Delete(relPath string) error
 }
@@ -34,7 +36,7 @@ func NewDiskStorage(baseDir string) (*DiskStorage, error) {
 	}, nil
 }
 
-func (s *DiskStorage) Save(src io.Reader) (string, int64, error) {
+func (s *DiskStorage) Save(src io.Reader) (string, int64, string, error) {
 	now := time.Now()
 	subDir := fmt.Sprintf("%d/%02d", now.Year(), now.Month())
 	filename := fmt.Sprintf("%s.dat", uuid.New().String())
@@ -43,17 +45,16 @@ func (s *DiskStorage) Save(src io.Reader) (string, int64, error) {
 
 	fullSubDir := filepath.Join(s.baseDir, subDir)
 	if err := os.MkdirAll(fullSubDir, 0o755); err != nil {
-		return "", 0, fmt.Errorf("failed to create subdir: %w", err)
+		return "", 0, "", fmt.Errorf("failed to create subdir: %w", err)
 	}
 
 	fullPath := filepath.Join(s.baseDir, relPath)
 
 	dstFile, err := os.Create(fullPath)
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to create target file: %w", err)
+		return "", 0, "", fmt.Errorf("failed to create target file: %w", err)
 	}
 
-	// 确保文件关闭并处理失败情况
 	var success bool
 	defer func() {
 		_ = dstFile.Close()
@@ -62,13 +63,18 @@ func (s *DiskStorage) Save(src io.Reader) (string, int64, error) {
 		}
 	}()
 
-	written, err := io.Copy(dstFile, src)
+	hasher := sha256.New()
+	multiWriter := io.MultiWriter(dstFile, hasher)
+
+	written, err := io.Copy(multiWriter, src)
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to write stream to disk: %w", err)
+		return "", 0, "", fmt.Errorf("failed to write stream to disk: %w", err)
 	}
 
 	success = true
-	return relPath, written, nil
+	hashHex := hex.EncodeToString(hasher.Sum(nil))
+
+	return relPath, written, hashHex, nil
 }
 
 func (s *DiskStorage) Open(relPath string) (io.ReadCloser, error) {
@@ -102,7 +108,6 @@ func (s *DiskStorage) Delete(relPath string) error {
 	return nil
 }
 
-// resolveSafePath 将相对路径解析为安全的绝对路径
 func (s *DiskStorage) resolveSafePath(relPath string) (string, error) {
 	cleanRel := filepath.Clean(relPath)
 	fullPath := filepath.Join(s.baseDir, cleanRel)
