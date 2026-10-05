@@ -1,11 +1,12 @@
 package service
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -23,12 +24,14 @@ type ShareService struct {
 	db            *gorm.DB
 	storage       storage.Storage
 	folderService *FolderService
+	s3Storage     *storage.S3Storage
 }
 
-func NewShareService(db *gorm.DB, st storage.Storage, fs *FolderService) *ShareService {
+func NewShareService(db *gorm.DB, st storage.Storage, s3 *storage.S3Storage, fs *FolderService) *ShareService {
 	return &ShareService{
 		db:            db,
 		storage:       st,
+		s3Storage:     s3,
 		folderService: fs,
 	}
 }
@@ -154,7 +157,6 @@ func (s *ShareService) GetPublicShareDetail(shareCode string) (*model.PublicShar
 
 	if share.TargetType == model.ShareTypeFile {
 		var f model.File
-		// 预加载 Blob 物理块
 		if err := s.db.Preload("Blob").First(&f, share.TargetID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, ErrShareTargetNotFound
@@ -188,34 +190,44 @@ func (s *ShareService) GetPublicShareDetail(shareCode string) (*model.PublicShar
 }
 
 // DownloadSharedFile 流式下载分享的文件
-func (s *ShareService) DownloadSharedFile(shareCode string) (*model.File, io.ReadCloser, error) {
+func (s *ShareService) DownloadSharedFile(ctx context.Context, shareCode string) (*FileDownloadResult, error) {
 	var share model.Share
 	if err := s.db.Where("share_code = ?", shareCode).First(&share).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil, ErrShareNotFound
+			return nil, ErrShareNotFound
 		}
-		return nil, nil, err
+		return nil, err
 	}
-
 	if share.TargetType != model.ShareTypeFile {
-		return nil, nil, errors.New("cannot download a folder directly as a single file")
+		return nil, errors.New("cannot download a folder directly as a single file")
 	}
-
 	var f model.File
-	// 预加载 Blob 以获取真实的物理磁盘路径 StorageName
 	if err := s.db.Preload("Blob").First(&f, share.TargetID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil, ErrShareTargetNotFound
+			return nil, ErrShareTargetNotFound
 		}
-		return nil, nil, err
+		return nil, err
 	}
-
+	if f.Blob.StorageType == model.StorageTypeS3 && s.s3Storage != nil {
+		presignedURL, err := s.s3Storage.GetPresignedURL(ctx, f.Blob.StorageName, f.Filename, 15*time.Minute)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate presigned download link: %w", err)
+		}
+		return &FileDownloadResult{
+			File:         &f,
+			PresignedURL: presignedURL,
+			IsRemote:     true,
+		}, nil
+	}
 	stream, err := s.storage.Open(f.Blob.StorageName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open physical storage: %w", err)
+		return nil, fmt.Errorf("failed to open physical storage: %w", err)
 	}
-
-	return &f, stream, nil
+	return &FileDownloadResult{
+		File:     &f,
+		Stream:   stream,
+		IsRemote: false,
+	}, nil
 }
 
 func generateShareCode(byteLen int) (string, error) {

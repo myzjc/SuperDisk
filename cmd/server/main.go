@@ -43,13 +43,38 @@ func main() {
 		log.Fatalf("Fatal: Failed to initialize disk storage: %v", err)
 	}
 
+	s3Endpoint := os.Getenv("S3_ENDPOINT")
+	if s3Endpoint == "" {
+		s3Endpoint = "127.0.0.1:9000"
+	}
+	s3Bucket := os.Getenv("S3_BUCKET")
+	if s3Bucket == "" {
+		s3Bucket = "superdisk"
+	}
+	s3AK := os.Getenv("S3_ACCESS_KEY")
+	if s3AK == "" {
+		s3AK = "minioadmin"
+	}
+	s3SK := os.Getenv("S3_SECRET_KEY")
+	if s3SK == "" {
+		s3SK = "minioadmin"
+	}
+	s3Storage, err := storage.NewS3Storage(storage.S3Config{
+		Endpoint:  s3Endpoint,
+		Bucket:    s3Bucket,
+		AccessKey: s3AK,
+		SecretKey: s3SK,
+		UseSSL:    false,
+	})
+	if err != nil {
+		log.Printf("[Init] Warning: S3 storage initialization: %v", err)
+	}
 	jwtManager := jwt.NewJWTManager(jwtSecretKey, jwtDuration)
-
-	fileService := service.NewFileService(db, diskStorage)
-	fileHandler := handler.NewFileHandler(fileService)
 	folderService := service.NewFolderService(db, diskStorage)
 	folderHandler := handler.NewFolderHandler(folderService)
-	shareService := service.NewShareService(db, diskStorage, folderService)
+	fileService := service.NewFileService(db, diskStorage, s3Storage)
+	fileHandler := handler.NewFileHandler(fileService)
+	shareService := service.NewShareService(db, diskStorage, s3Storage, folderService)
 	shareHandler := handler.NewShareHandler(shareService)
 	userService := service.NewUserService(db, jwtManager, diskStorage)
 	authHandler := handler.NewAuthHandler(userService)
@@ -90,6 +115,7 @@ func main() {
 		filesGroup.PATCH("/:id", fileHandler.Rename)
 		filesGroup.PATCH("/:id/move", fileHandler.Move)
 		filesGroup.DELETE("/:id", fileHandler.Delete)
+		filesGroup.POST("/:id/migrate", fileHandler.Migrate)
 	}
 	foldersGroup := api.Group("/folders")
 	foldersGroup.Use(customMiddleware.JWTMiddleware(jwtManager, db))

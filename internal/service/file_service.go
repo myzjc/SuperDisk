@@ -2,12 +2,14 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/myzjc/SuperDisk/internal/model"
 	"github.com/myzjc/SuperDisk/internal/storage"
@@ -15,19 +17,29 @@ import (
 	"gorm.io/gorm"
 )
 
-type FileService struct {
-	db      *gorm.DB
-	storage storage.Storage
+// FileDownloadResult 封装下载结果
+type FileDownloadResult struct {
+	File         *model.File
+	Stream       io.ReadCloser // 本地文件流
+	PresignedURL string        // S3 预签名直链
+	IsRemote     bool
 }
 
-func NewFileService(db *gorm.DB, st storage.Storage) *FileService {
+type FileService struct {
+	db        *gorm.DB
+	storage   storage.Storage
+	s3Storage *storage.S3Storage
+}
+
+func NewFileService(db *gorm.DB, st storage.Storage, s3 *storage.S3Storage) *FileService {
 	return &FileService{
-		db:      db,
-		storage: st,
+		db:        db,
+		storage:   st,
+		s3Storage: s3,
 	}
 }
 
-// Upload 流式上传+去重
+// Upload 流式上传 + 秒传去重
 func (s *FileService) Upload(userID uint, originalFilename string, folderID uint, src io.Reader) (*model.FileResponse, error) {
 	if strings.TrimSpace(originalFilename) == "" {
 		return nil, errors.New("filename cannot be empty")
@@ -60,7 +72,6 @@ func (s *FileService) Upload(userID uint, originalFilename string, folderID uint
 	}
 
 	var targetBlob model.FileBlob
-
 	err = s.db.Where("file_hash = ?", fileHash).First(&targetBlob).Error
 	if err == nil {
 		_ = s.storage.Delete(relPath)
@@ -71,6 +82,7 @@ func (s *FileService) Upload(userID uint, originalFilename string, folderID uint
 	} else if errors.Is(err, gorm.ErrRecordNotFound) {
 		targetBlob = model.FileBlob{
 			FileHash:    fileHash,
+			StorageType: model.StorageTypeLocal,
 			StorageName: relPath,
 			FileSize:    writtenSize,
 			ContentType: contentType,
@@ -100,22 +112,78 @@ func (s *FileService) Upload(userID uint, originalFilename string, folderID uint
 	return s.toResponse(&fileRecord), nil
 }
 
-// GetFileForDownload 下载当前用户拥有的文件
-func (s *FileService) GetFileForDownload(userID uint, id uint) (*model.File, io.ReadCloser, error) {
+// MigrateFile 将指定文件的数据块从本地磁盘挪到对象存储中
+func (s *FileService) MigrateFile(ctx context.Context, userID uint, id uint) error {
+	var fileRecord model.File
+	if err := s.db.Preload("Blob").Where("id = ? AND user_id = ?", id, userID).First(&fileRecord).Error; err != nil {
+		return errors.New("file not found")
+	}
+
+	if fileRecord.Blob.StorageType == model.StorageTypeS3 {
+		return nil
+	}
+
+	if s.s3Storage == nil {
+		return errors.New("object storage is not configured")
+	}
+
+	localStream, err := s.storage.Open(fileRecord.Blob.StorageName)
+	if err != nil {
+		return fmt.Errorf("failed to open local physical file: %w", err)
+	}
+	defer localStream.Close()
+
+	err = s.s3Storage.Upload(ctx, fileRecord.Blob.StorageName, localStream, fileRecord.Blob.FileSize, fileRecord.Blob.ContentType)
+	if err != nil {
+		return fmt.Errorf("failed to upload to S3: %w", err)
+	}
+
+	oldLocalPath := fileRecord.Blob.StorageName
+	fileRecord.Blob.StorageType = model.StorageTypeS3
+	if err := s.db.Save(&fileRecord.Blob).Error; err != nil {
+		return fmt.Errorf("failed to update blob storage type: %w", err)
+	}
+
+	_ = s.storage.Delete(oldLocalPath)
+
+	return nil
+}
+
+// GetFileForDownload 下载文件
+func (s *FileService) GetFileForDownload(ctx context.Context, userID uint, id uint) (*FileDownloadResult, error) {
 	var fileRecord model.File
 	if err := s.db.Preload("Blob").Where("id = ? AND user_id = ?", id, userID).First(&fileRecord).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil, errors.New("file record not found")
+			return nil, errors.New("file record not found")
 		}
-		return nil, nil, err
+		return nil, err
+	}
+
+	if fileRecord.Blob.StorageType == model.StorageTypeS3 {
+		if s.s3Storage == nil {
+			return nil, errors.New("object storage not available")
+		}
+		presignedURL, err := s.s3Storage.GetPresignedURL(ctx, fileRecord.Blob.StorageName, fileRecord.Filename, 15*time.Minute)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate presigned download link: %w", err)
+		}
+		return &FileDownloadResult{
+			File:         &fileRecord,
+			PresignedURL: presignedURL,
+			IsRemote:     true,
+		}, nil
 	}
 
 	stream, err := s.storage.Open(fileRecord.Blob.StorageName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open physical file: %w", err)
+		return nil, fmt.Errorf("failed to open physical file: %w", err)
 	}
 
-	return &fileRecord, stream, nil
+	return &FileDownloadResult{
+		File:     &fileRecord,
+		Stream:   stream,
+		IsRemote: false,
+	}, nil
 }
 
 // ListFiles 获取用户特定目录下的文件
@@ -189,19 +257,20 @@ func (s *FileService) Delete(userID uint, id uint) error {
 	}
 
 	var shouldPhysicalDelete bool
+	var storageTypeToDelete string
 	var storageNameToDelete string
 
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Delete(&fileRecord).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("target_type = ? AND target_id = ?", model.ShareTypeFile, id).Delete(&model.Share{}).Error; err != nil {
-			return err
-		}
+
+		_ = tx.Where("target_type = ? AND target_id = ?", model.ShareTypeFile, id).Delete(&model.Share{}).Error
 
 		fileRecord.Blob.RefCount--
 		if fileRecord.Blob.RefCount <= 0 {
 			shouldPhysicalDelete = true
+			storageTypeToDelete = fileRecord.Blob.StorageType
 			storageNameToDelete = fileRecord.Blob.StorageName
 			if err := tx.Delete(&fileRecord.Blob).Error; err != nil {
 				return err
@@ -218,7 +287,11 @@ func (s *FileService) Delete(userID uint, id uint) error {
 	}
 
 	if shouldPhysicalDelete {
-		_ = s.storage.Delete(storageNameToDelete)
+		if storageTypeToDelete == model.StorageTypeS3 && s.s3Storage != nil {
+			_ = s.s3Storage.Delete(context.Background(), storageNameToDelete)
+		} else {
+			_ = s.storage.Delete(storageNameToDelete)
+		}
 	}
 
 	return nil

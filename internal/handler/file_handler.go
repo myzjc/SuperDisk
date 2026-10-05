@@ -104,27 +104,25 @@ func (h *FileHandler) Download(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
 	}
-
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid file ID")
 	}
-
-	fileRecord, stream, err := h.fileService.GetFileForDownload(userID, uint(id))
+	result, err := h.fileService.GetFileForDownload(c.Request().Context(), userID, uint(id))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, err.Error())
 	}
-	defer stream.Close()
-
-	encodedFilename := url.PathEscape(fileRecord.Filename)
+	if result.IsRemote {
+		return c.Redirect(http.StatusFound, result.PresignedURL)
+	}
+	defer result.Stream.Close()
+	encodedFilename := url.PathEscape(result.File.Filename)
 	contentDisposition := fmt.Sprintf("attachment; filename=\"%s\"; filename*=UTF-8''%s", encodedFilename, encodedFilename)
 	c.Response().Header().Set(echo.HeaderContentDisposition, contentDisposition)
-
-	if fileRecord.Blob.FileSize > 0 {
-		c.Response().Header().Set(echo.HeaderContentLength, strconv.FormatInt(fileRecord.Blob.FileSize, 10))
+	if result.File.Blob.FileSize > 0 {
+		c.Response().Header().Set(echo.HeaderContentLength, strconv.FormatInt(result.File.Blob.FileSize, 10))
 	}
-
-	return c.Stream(http.StatusOK, fileRecord.Blob.ContentType, stream)
+	return c.Stream(http.StatusOK, result.File.Blob.ContentType, result.Stream)
 }
 
 type RenameReq struct {
@@ -202,4 +200,24 @@ func (h *FileHandler) Delete(c echo.Context) error {
 	}
 
 	return c.NoContent(http.StatusNoContent)
+}
+
+// Migrate 将文件挪动到对象存储中
+// POST /api/v1/files/:id/migrate
+func (h *FileHandler) Migrate(c echo.Context) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
+	}
+
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid file ID")
+	}
+
+	if err := h.fileService.MigrateFile(c.Request().Context(), userID, uint(id)); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	return c.JSON(http.StatusOK, echo.Map{"message": "file migrated to object storage successfully"})
 }

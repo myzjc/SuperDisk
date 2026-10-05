@@ -116,24 +116,22 @@ func (h *ShareHandler) DownloadPublicFile(c echo.Context) error {
 	if code == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Missing share code")
 	}
-
-	fileRecord, stream, err := h.shareService.DownloadSharedFile(code)
+	result, err := h.shareService.DownloadSharedFile(c.Request().Context(), code)
 	if err != nil {
 		if errors.Is(err, service.ErrShareNotFound) || errors.Is(err, service.ErrShareTargetNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, err.Error())
 		}
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-	defer stream.Close()
-
-	// 编码文件名并配置 Content-Disposition，从 Blob 读取实际物理大小和类型
-	encodedFilename := url.PathEscape(fileRecord.Filename)
+	if result.IsRemote {
+		return c.Redirect(http.StatusFound, result.PresignedURL)
+	}
+	defer result.Stream.Close()
+	encodedFilename := url.PathEscape(result.File.Filename)
 	contentDisposition := fmt.Sprintf("attachment; filename=\"%s\"; filename*=UTF-8''%s", encodedFilename, encodedFilename)
 	c.Response().Header().Set(echo.HeaderContentDisposition, contentDisposition)
-
-	if fileRecord.Blob.FileSize > 0 {
-		c.Response().Header().Set(echo.HeaderContentLength, strconv.FormatInt(fileRecord.Blob.FileSize, 10))
+	if result.File.Blob.FileSize > 0 {
+		c.Response().Header().Set(echo.HeaderContentLength, strconv.FormatInt(result.File.Blob.FileSize, 10))
 	}
-
-	return c.Stream(http.StatusOK, fileRecord.Blob.ContentType, stream)
+	return c.Stream(http.StatusOK, result.File.Blob.ContentType, result.Stream)
 }
