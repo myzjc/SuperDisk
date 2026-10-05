@@ -6,14 +6,15 @@ import "time"
 // File 代表存储在数据库中的文件元数据模型
 type File struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
-	Filename    string    `gorm:"not null" json:"filename"`              // 用户看到的文件名
+	Filename    string    `gorm:"not null" json:"filename"`                  // 用户看到的文件名
 	FolderID    uint      `gorm:"not null;default:0;index" json:"folder_id"` // 所属文件夹ID
-	UserID      uint      `gorm:"not null;index" json:"user_id"`         // 用户id
-	StorageName string    `gorm:"uniqueIndex;not null" json:"-"`         // 磁盘上的真实物理文件名（唯一索引）
-	FileSize    int64     `gorm:"not null" json:"file_size"`             // 文件字节大小
-	ContentType string    `gorm:"type:varchar(128)" json:"content_type"` // 文件 MIME 类型
-	CreatedAt   time.Time `json:"created_at"`                            // 上传时间
-	UpdatedAt   time.Time `json:"updated_at"`                            // 修改时间
+	UserID      uint      `gorm:"not null;index" json:"user_id"`             // 用户id
+	BlobID      uint      `gorm:"not null;index" json:"blob_id"`             // 对应的物理文件数据块ID
+	Blob        FileBlob  `gorm:"foreignKey:BlobID" json:"blob"`             // 对应的物理文件数据块
+	FileSize    int64     `gorm:"not null" json:"file_size"`                 // 文件字节大小
+	ContentType string    `gorm:"type:varchar(128)" json:"content_type"`     // 文件 MIME 类型
+	CreatedAt   time.Time `json:"created_at"`                                // 上传时间
+	UpdatedAt   time.Time `json:"updated_at"`                                // 修改时间
 }
 
 // FileResponse 代表返回给前端/客户端的 JSON 视图
@@ -24,6 +25,7 @@ type FileResponse struct {
 	UserID      uint      `json:"user_id"`
 	FileSize    int64     `json:"file_size"`
 	ContentType string    `json:"content_type"`
+	FileHash    string    `json:"file_hash"`
 	DownloadURL string    `json:"download_url"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
