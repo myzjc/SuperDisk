@@ -116,6 +116,11 @@ func main() {
 		filesGroup.PATCH("/:id/move", fileHandler.Move)
 		filesGroup.DELETE("/:id", fileHandler.Delete)
 		filesGroup.POST("/:id/migrate", fileHandler.Migrate)
+
+		filesGroup.POST("/upload/init", fileHandler.InitChunkUpload)
+		filesGroup.POST("/upload/chunk", fileHandler.UploadChunk)
+		filesGroup.GET("/upload/:upload_id", fileHandler.GetChunkUploadStatus)
+		filesGroup.POST("/upload/complete", fileHandler.CompleteChunkUpload)
 	}
 	foldersGroup := api.Group("/folders")
 	foldersGroup.Use(customMiddleware.JWTMiddleware(jwtManager, db))
