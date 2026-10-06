@@ -130,8 +130,7 @@ func (h *ShareHandler) DownloadPublicFile(c echo.Context) error {
 	encodedFilename := url.PathEscape(result.File.Filename)
 	contentDisposition := fmt.Sprintf("attachment; filename=\"%s\"; filename*=UTF-8''%s", encodedFilename, encodedFilename)
 	c.Response().Header().Set(echo.HeaderContentDisposition, contentDisposition)
-	if result.File.Blob.FileSize > 0 {
-		c.Response().Header().Set(echo.HeaderContentLength, strconv.FormatInt(result.File.Blob.FileSize, 10))
-	}
-	return c.Stream(http.StatusOK, result.File.Blob.ContentType, result.Stream)
+	c.Response().Header().Set("Accept-Ranges", "bytes")
+	http.ServeContent(c.Response(), c.Request(), result.File.Filename, result.File.UpdatedAt, result.Stream)
+	return nil
 }

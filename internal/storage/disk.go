@@ -17,7 +17,7 @@ import (
 
 type Storage interface {
 	Save(src io.Reader) (relPath string, size int64, hash string, err error)
-	Open(relPath string) (io.ReadCloser, error)
+	Open(relPath string) (io.ReadSeekCloser, error)
 	Delete(relPath string) error
 }
 
@@ -77,12 +77,12 @@ func (s *DiskStorage) Save(src io.Reader) (string, int64, string, error) {
 	return relPath, written, hashHex, nil
 }
 
-func (s *DiskStorage) Open(relPath string) (io.ReadCloser, error) {
+// Open 打开本地物理文件并返回支持 Seek 寻址的句柄
+func (s *DiskStorage) Open(relPath string) (io.ReadSeekCloser, error) {
 	fullPath, err := s.resolveSafePath(relPath)
 	if err != nil {
 		return nil, err
 	}
-
 	file, err := os.Open(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -90,10 +90,10 @@ func (s *DiskStorage) Open(relPath string) (io.ReadCloser, error) {
 		}
 		return nil, err
 	}
-
 	return file, nil
 }
 
+// Delete 删除本地物理文件
 func (s *DiskStorage) Delete(relPath string) error {
 	fullPath, err := s.resolveSafePath(relPath)
 	if err != nil {
@@ -108,6 +108,7 @@ func (s *DiskStorage) Delete(relPath string) error {
 	return nil
 }
 
+// resolveSafePath 解析安全路径
 func (s *DiskStorage) resolveSafePath(relPath string) (string, error) {
 	cleanRel := filepath.Clean(relPath)
 	fullPath := filepath.Join(s.baseDir, cleanRel)

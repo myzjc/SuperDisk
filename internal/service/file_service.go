@@ -20,8 +20,8 @@ import (
 // FileDownloadResult 封装下载结果
 type FileDownloadResult struct {
 	File         *model.File
-	Stream       io.ReadCloser // 本地文件流
-	PresignedURL string        // S3 预签名直链
+	Stream       io.ReadSeekCloser // 本地文件流
+	PresignedURL string            // S3 预签名直链
 	IsRemote     bool
 }
 
