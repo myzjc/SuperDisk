@@ -19,10 +19,14 @@ type Storage interface {
 	Save(src io.Reader) (relPath string, size int64, hash string, err error)
 	Open(relPath string) (io.ReadSeekCloser, error)
 	Delete(relPath string) error
+	SaveChunk(uploadID string, chunkIndex int, src io.Reader) error
+	GetUploadedChunks(uploadID string) ([]int, error)
+	MergeChunks(uploadID string, totalChunks int) (relPath string, size int64, hash string, err error)
 }
 
 type DiskStorage struct {
-	baseDir string
+	baseDir   string
+	chunksDir string
 }
 
 func NewDiskStorage(baseDir string) (*DiskStorage, error) {
@@ -32,7 +36,8 @@ func NewDiskStorage(baseDir string) (*DiskStorage, error) {
 	}
 
 	return &DiskStorage{
-		baseDir: cleanDir,
+		baseDir:   cleanDir,
+		chunksDir: filepath.Join(cleanDir, "chunks"),
 	}, nil
 }
 
