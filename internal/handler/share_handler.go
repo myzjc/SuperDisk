@@ -109,28 +109,38 @@ func (h *ShareHandler) GetPublicDetail(c echo.Context) error {
 	return c.JSON(http.StatusOK, detail)
 }
 
-// DownloadPublicFile 免登录流式下载分享的文件
-// GET /api/v1/public/shares/:code/download
+// DownloadPublicFile 免登录下载分享的文件或打包下载分享的文件夹
+// GET /api/v1/public/shares/:code/download?format=zip
 func (h *ShareHandler) DownloadPublicFile(c echo.Context) error {
 	code := c.Param("code")
 	if code == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "Missing share code")
 	}
-	result, err := h.shareService.DownloadSharedFile(c.Request().Context(), code)
+	format := c.QueryParam("format")
+	result, err := h.shareService.DownloadSharedTarget(c.Request().Context(), code, format)
 	if err != nil {
 		if errors.Is(err, service.ErrShareNotFound) || errors.Is(err, service.ErrShareTargetNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, err.Error())
 		}
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-	if result.IsRemote {
-		return c.Redirect(http.StatusFound, result.PresignedURL)
+	if result.TargetType == "folder" {
+		defer result.FolderResult.File.Close()
+		encodedFilename := url.PathEscape(result.FolderResult.ArchiveName)
+		contentDisposition := fmt.Sprintf("attachment; filename=\"%s\"; filename*=UTF-8''%s", encodedFilename, encodedFilename)
+		c.Response().Header().Set(echo.HeaderContentDisposition, contentDisposition)
+		c.Response().Header().Set("Accept-Ranges", "bytes")
+		http.ServeContent(c.Response(), c.Request(), result.FolderResult.ArchiveName, result.FolderResult.UpdatedAt, result.FolderResult.File)
+		return nil
 	}
-	defer result.Stream.Close()
-	encodedFilename := url.PathEscape(result.File.Filename)
+	if result.FileResult.IsRemote {
+		return c.Redirect(http.StatusFound, result.FileResult.PresignedURL)
+	}
+	defer result.FileResult.Stream.Close()
+	encodedFilename := url.PathEscape(result.FileResult.File.Filename)
 	contentDisposition := fmt.Sprintf("attachment; filename=\"%s\"; filename*=UTF-8''%s", encodedFilename, encodedFilename)
 	c.Response().Header().Set(echo.HeaderContentDisposition, contentDisposition)
 	c.Response().Header().Set("Accept-Ranges", "bytes")
-	http.ServeContent(c.Response(), c.Request(), result.File.Filename, result.File.UpdatedAt, result.Stream)
+	http.ServeContent(c.Response(), c.Request(), result.FileResult.File.Filename, result.FileResult.File.UpdatedAt, result.FileResult.Stream)
 	return nil
 }

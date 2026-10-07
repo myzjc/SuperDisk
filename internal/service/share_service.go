@@ -27,6 +27,13 @@ type ShareService struct {
 	s3Storage     *storage.S3Storage
 }
 
+// SharedDownloadResult 统一包装公共分享的下载结果
+type SharedDownloadResult struct {
+	TargetType   string               // "file" 或 "folder"
+	FileResult   *FileDownloadResult  // 文件下载载体（本地流或 S3 预签名）
+	FolderResult *FolderArchiveResult // 文件夹打包载体（本地缓存压缩流）
+}
+
 func NewShareService(db *gorm.DB, st storage.Storage, s3 *storage.S3Storage, fs *FolderService) *ShareService {
 	return &ShareService{
 		db:            db,
@@ -189,8 +196,8 @@ func (s *ShareService) GetPublicShareDetail(shareCode string) (*model.PublicShar
 	return detail, nil
 }
 
-// DownloadSharedFile 流式下载分享的文件
-func (s *ShareService) DownloadSharedFile(ctx context.Context, shareCode string) (*FileDownloadResult, error) {
+// DownloadSharedTarget 统一处理分享资源的下载（单文件或打包文件夹）
+func (s *ShareService) DownloadSharedTarget(ctx context.Context, shareCode string, format string) (*SharedDownloadResult, error) {
 	var share model.Share
 	if err := s.db.Where("share_code = ?", shareCode).First(&share).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -198,8 +205,18 @@ func (s *ShareService) DownloadSharedFile(ctx context.Context, shareCode string)
 		}
 		return nil, err
 	}
-	if share.TargetType != model.ShareTypeFile {
-		return nil, errors.New("cannot download a folder directly as a single file")
+	if share.TargetType == model.ShareTypeFolder {
+		archiveResult, err := s.folderService.DownloadFolderArchive(ctx, share.UserID, share.TargetID, format)
+		if err != nil {
+			if errors.Is(err, ErrFolderNotFound) {
+				return nil, ErrShareTargetNotFound
+			}
+			return nil, err
+		}
+		return &SharedDownloadResult{
+			TargetType:   model.ShareTypeFolder,
+			FolderResult: archiveResult,
+		}, nil
 	}
 	var f model.File
 	if err := s.db.Preload("Blob").First(&f, share.TargetID).Error; err != nil {
@@ -213,20 +230,26 @@ func (s *ShareService) DownloadSharedFile(ctx context.Context, shareCode string)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate presigned download link: %w", err)
 		}
-		return &FileDownloadResult{
-			File:         &f,
-			PresignedURL: presignedURL,
-			IsRemote:     true,
+		return &SharedDownloadResult{
+			TargetType: model.ShareTypeFile,
+			FileResult: &FileDownloadResult{
+				File:         &f,
+				PresignedURL: presignedURL,
+				IsRemote:     true,
+			},
 		}, nil
 	}
 	stream, err := s.storage.Open(f.Blob.StorageName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open physical storage: %w", err)
 	}
-	return &FileDownloadResult{
-		File:     &f,
-		Stream:   stream,
-		IsRemote: false,
+	return &SharedDownloadResult{
+		TargetType: model.ShareTypeFile,
+		FileResult: &FileDownloadResult{
+			File:     &f,
+			Stream:   stream,
+			IsRemote: false,
+		},
 	}, nil
 }
 

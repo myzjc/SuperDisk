@@ -121,7 +121,6 @@ func main() {
 		filesGroup.POST("/upload/chunk", fileHandler.UploadChunk)
 		filesGroup.GET("/upload/:upload_id", fileHandler.GetChunkUploadStatus)
 		filesGroup.POST("/upload/complete", fileHandler.CompleteChunkUpload)
-		filesGroup.GET("/:id/download", folderHandler.Download)
 	}
 	foldersGroup := api.Group("/folders")
 	foldersGroup.Use(customMiddleware.JWTMiddleware(jwtManager, db))
@@ -132,6 +131,7 @@ func main() {
 		foldersGroup.PATCH("/:id", folderHandler.Rename)
 		foldersGroup.PATCH("/:id/move", folderHandler.Move)
 		foldersGroup.DELETE("/:id", folderHandler.Delete)
+		foldersGroup.GET("/:id/download", folderHandler.Download)
 	}
 	publicSharesGroup := api.Group("/public/shares")
 	{
