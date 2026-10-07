@@ -121,6 +121,7 @@ func main() {
 		filesGroup.POST("/upload/chunk", fileHandler.UploadChunk)
 		filesGroup.GET("/upload/:upload_id", fileHandler.GetChunkUploadStatus)
 		filesGroup.POST("/upload/complete", fileHandler.CompleteChunkUpload)
+		filesGroup.GET("/:id/download", folderHandler.Download)
 	}
 	foldersGroup := api.Group("/folders")
 	foldersGroup.Use(customMiddleware.JWTMiddleware(jwtManager, db))
