@@ -40,15 +40,12 @@ func (s *FolderService) DownloadFolderArchive(ctx context.Context, userID uint, 
 	if format != FormatZip && format != FormatTarGz && format != Format7z {
 		return nil, fmt.Errorf("unsupported format '%s': must be zip, tar.gz, or 7z", format)
 	}
-
 	var rootFolder model.Folder
 	if err := s.db.Where("id = ? AND user_id = ?", folderID, userID).First(&rootFolder).Error; err != nil {
 		return nil, ErrFolderNotFound
 	}
-
 	tempDir := "./data/temp_archives"
 	_ = os.MkdirAll(tempDir, 0o755)
-
 	var ext, contentType string
 	switch format {
 	case FormatZip:
@@ -61,33 +58,21 @@ func (s *FolderService) DownloadFolderArchive(ctx context.Context, userID uint, 
 		ext = ".7z"
 		contentType = "application/x-7z-compressed"
 	}
-
-	archiveFileName := fmt.Sprintf("%d_%d%s", rootFolder.ID, rootFolder.UpdatedAt.UnixNano(), ext)
-	archiveFilePath := filepath.Join(tempDir, archiveFileName)
-	archiveName := fmt.Sprintf("%s%s", rootFolder.Name, ext)
-
-	if file, err := os.Open(archiveFilePath); err == nil {
-		return &FolderArchiveResult{
-			ArchiveName: archiveName,
-			File:        file,
-			UpdatedAt:   rootFolder.UpdatedAt,
-			ContentType: contentType,
-		}, nil
-	}
-
 	folderPathMap := make(map[uint]string)
 	folderPathMap[rootFolder.ID] = rootFolder.Name
 	queue := []uint{rootFolder.ID}
 	allFolderIDs := []uint{rootFolder.ID}
-
+	maxFolderUpdatedAt := rootFolder.UpdatedAt
 	for len(queue) > 0 {
 		currID := queue[0]
 		queue = queue[1:]
 		currPath := folderPathMap[currID]
-
 		var subFolders []model.Folder
 		if err := s.db.Where("user_id = ? AND parent_id = ?", userID, currID).Find(&subFolders).Error; err == nil {
 			for _, sub := range subFolders {
+				if sub.UpdatedAt.After(maxFolderUpdatedAt) {
+					maxFolderUpdatedAt = sub.UpdatedAt
+				}
 				subPath := filepath.Join(currPath, sub.Name)
 				folderPathMap[sub.ID] = subPath
 				allFolderIDs = append(allFolderIDs, sub.ID)
@@ -95,19 +80,35 @@ func (s *FolderService) DownloadFolderArchive(ctx context.Context, userID uint, 
 			}
 		}
 	}
-
 	var files []model.File
 	if err := s.db.Preload("Blob").Where("user_id = ? AND folder_id IN ?", userID, allFolderIDs).Find(&files).Error; err != nil {
 		return nil, err
 	}
-
+	latestTimestamp := maxFolderUpdatedAt
+	var totalSize int64
+	for _, f := range files {
+		if f.UpdatedAt.After(latestTimestamp) {
+			latestTimestamp = f.UpdatedAt
+		}
+		totalSize += f.Blob.FileSize
+	}
+	archiveFileName := fmt.Sprintf("%d_%d_%d_%d%s", rootFolder.ID, latestTimestamp.UnixNano(), len(files), totalSize, ext)
+	archiveFilePath := filepath.Join(tempDir, archiveFileName)
+	archiveName := fmt.Sprintf("%s%s", rootFolder.Name, ext)
+	if file, err := os.Open(archiveFilePath); err == nil {
+		return &FolderArchiveResult{
+			ArchiveName: archiveName,
+			File:        file,
+			UpdatedAt:   latestTimestamp,
+			ContentType: contentType,
+		}, nil
+	}
 	getFileStream := func(f *model.File) (io.ReadCloser, error) {
 		if f.Blob.StorageType == model.StorageTypeS3 && s.s3Storage != nil {
 			return s.s3Storage.Open(ctx, f.Blob.StorageName)
 		}
 		return s.storage.Open(f.Blob.StorageName)
 	}
-
 	var err error
 	switch format {
 	case FormatZip:
@@ -121,16 +122,14 @@ func (s *FolderService) DownloadFolderArchive(ctx context.Context, userID uint, 
 		_ = os.Remove(archiveFilePath)
 		return nil, fmt.Errorf("archive creation failed: %w", err)
 	}
-
 	resultFile, err := os.Open(archiveFilePath)
 	if err != nil {
 		return nil, err
 	}
-
 	return &FolderArchiveResult{
 		ArchiveName: archiveName,
 		File:        resultFile,
-		UpdatedAt:   rootFolder.UpdatedAt,
+		UpdatedAt:   latestTimestamp,
 		ContentType: contentType,
 	}, nil
 }
