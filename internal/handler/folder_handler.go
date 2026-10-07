@@ -2,7 +2,9 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/labstack/echo/v4"
@@ -116,6 +118,32 @@ func (h *FolderHandler) Move(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, resp)
+}
+
+func (h *FolderHandler) Download(c echo.Context) error {
+	userID, err := middleware.GetUserID(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid folder ID")
+	}
+	format := c.QueryParam("format")
+	result, err := h.folderService.DownloadFolderArchive(c.Request().Context(), userID, uint(id), format)
+	if err != nil {
+		if errors.Is(err, service.ErrFolderNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, err.Error())
+		}
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	defer result.File.Close()
+	encodedFilename := url.PathEscape(result.ArchiveName)
+	contentDisposition := fmt.Sprintf("attachment; filename=\"%s\"; filename*=UTF-8''%s", encodedFilename, encodedFilename)
+	c.Response().Header().Set(echo.HeaderContentDisposition, contentDisposition)
+	c.Response().Header().Set("Accept-Ranges", "bytes")
+	http.ServeContent(c.Response(), c.Request(), result.ArchiveName, result.UpdatedAt, result.File)
+	return nil
 }
 
 func (h *FolderHandler) Delete(c echo.Context) error {

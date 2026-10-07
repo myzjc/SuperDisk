@@ -19,14 +19,16 @@ var (
 )
 
 type FolderService struct {
-	db      *gorm.DB
-	storage storage.Storage
+	db        *gorm.DB
+	storage   storage.Storage
+	s3Storage *storage.S3Storage
 }
 
-func NewFolderService(db *gorm.DB, st storage.Storage) *FolderService {
+func NewFolderService(db *gorm.DB, st storage.Storage, s3 *storage.S3Storage) *FolderService {
 	return &FolderService{
-		db:      db,
-		storage: st,
+		db:        db,
+		storage:   st,
+		s3Storage: s3,
 	}
 }
 

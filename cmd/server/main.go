@@ -70,7 +70,7 @@ func main() {
 		log.Printf("[Init] Warning: S3 storage initialization: %v", err)
 	}
 	jwtManager := jwt.NewJWTManager(jwtSecretKey, jwtDuration)
-	folderService := service.NewFolderService(db, diskStorage)
+	folderService := service.NewFolderService(db, diskStorage, s3Storage)
 	folderHandler := handler.NewFolderHandler(folderService)
 	fileService := service.NewFileService(db, diskStorage, s3Storage)
 	fileHandler := handler.NewFileHandler(fileService)

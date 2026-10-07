@@ -65,6 +65,15 @@ func (s *S3Storage) Upload(ctx context.Context, objectKey string, reader io.Read
 	return nil
 }
 
+// Open 获取 S3 对象的流式读取句柄（MinIO 的 GetObject 原生返回可读流）
+func (s *S3Storage) Open(ctx context.Context, objectKey string) (io.ReadCloser, error) {
+	obj, err := s.client.GetObject(ctx, s.config.Bucket, objectKey, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to open S3 object: %w", err)
+	}
+	return obj, nil
+}
+
 // GetPresignedURL 生成用于浏览器直接下载的预签名直链
 func (s *S3Storage) GetPresignedURL(ctx context.Context, objectKey string, downloadFilename string, expiry time.Duration) (string, error) {
 	reqParams := make(url.Values)
