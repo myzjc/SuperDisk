@@ -16,6 +16,7 @@ var (
 	ErrFolderAlreadyExists = errors.New("folder with same name already exists in this directory")
 	ErrInvalidFolderName   = errors.New("invalid folder name")
 	ErrCannotMoveToChild   = errors.New("cannot move folder into itself or its subfolder")
+	ErrCannotVerifyHierarchy = errors.New("failed to verify hierarchy")
 )
 
 type FolderService struct {
@@ -127,7 +128,7 @@ func (s *FolderService) MoveFolder(userID uint, id uint, targetParentID uint) (*
 			}
 			var ancestor model.Folder
 			if err := s.db.Where("id = ? AND user_id = ?", currParentID, userID).First(&ancestor).Error; err != nil {
-				return nil, fmt.Errorf("failed to verify hierarchy: %w", err)
+				return nil, ErrCannotVerifyHierarchy
 			}
 			currParentID = ancestor.ParentID
 		}
