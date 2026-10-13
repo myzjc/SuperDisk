@@ -114,6 +114,9 @@ func (h *FolderHandler) Move(c echo.Context) error {
 		if errors.Is(err, service.ErrFolderAlreadyExists) {
 			return echo.NewHTTPError(http.StatusConflict, err.Error())
 		}
+		if errors.Is(err, service.ErrCannotVerifyHierarchy) {
+			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		}
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
