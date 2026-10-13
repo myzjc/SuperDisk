@@ -127,7 +127,7 @@ func (s *FolderService) MoveFolder(userID uint, id uint, targetParentID uint) (*
 			}
 			var ancestor model.Folder
 			if err := s.db.Where("id = ? AND user_id = ?", currParentID, userID).First(&ancestor).Error; err != nil {
-				break
+				return nil, fmt.Errorf("failed to verify hierarchy: %w", err)
 			}
 			currParentID = ancestor.ParentID
 		}
